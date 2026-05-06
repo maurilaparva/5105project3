@@ -1,33 +1,108 @@
 services:
-  controller:
+  image-builder:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    image: project3-image:latest
+    command: ["echo", "image built"]
+
+  controller:
+    image: project3-image:latest
     container_name: controller
     command: ["python", "-u", "controller/controller.py"]
-    ports: 
+    ports:
       - "50050:50050"
-    volumes: 
+    volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
     environment:
+      CONTROLLER_PORT: "50050"
       SCALE_UP_THRESHOLD: "10"
       SCALE_DOWN_THRESHOLD: "2"
+      HEARTBEAT_INTERVAL: "5"
+      COOLDOWN_SECONDS: "30"
       NETWORK_NAME: "project3_net"
+      IMAGE_NAME: "project3-image:latest"
     networks: ["project3_net"]
+    depends_on:
+      image-builder:
+        condition: service_completed_successfully
+      service-node-1:
+        condition: service_started
+      service-node-2:
+        condition: service_started
+      storage-node-1:
+        condition: service_started
+      storage-node-2:
+        condition: service_started
+      storage-node-3:
+        condition: service_started
 
   service-node-1:
     image: project3-image:latest
+    container_name: service-node-1
+    hostname: service-node-1
     command: ["python", "-u", "service/service.py"]
     environment:
       GRPC_SERVER_PORT: "50060"
+      NODE_TARGET: "service-node-1:50060"
+      HEARTBEAT_INTERVAL: "5"
     networks: ["project3_net"]
+    depends_on:
+      image-builder:
+        condition: service_completed_successfully
+
+  service-node-2:
+    image: project3-image:latest
+    container_name: service-node-2
+    hostname: service-node-2
+    command: ["python", "-u", "service/service.py"]
+    environment:
+      GRPC_SERVER_PORT: "50061"
+      NODE_TARGET: "service-node-2:50061"
+      HEARTBEAT_INTERVAL: "5"
+    networks: ["project3_net"]
+    depends_on:
+      image-builder:
+        condition: service_completed_successfully
 
   storage-node-1:
     image: project3-image:latest
+    container_name: storage-node-1
+    hostname: storage-node-1
     command: ["python", "-u", "storage/storage_node.py"]
     environment:
       GRPC_SERVER_PORT: "50051"
+      NODE_TARGET: "storage-node-1:50051"
     networks: ["project3_net"]
+    depends_on:
+      image-builder:
+        condition: service_completed_successfully
+
+  storage-node-2:
+    image: project3-image:latest
+    container_name: storage-node-2
+    hostname: storage-node-2
+    command: ["python", "-u", "storage/storage_node.py"]
+    environment:
+      GRPC_SERVER_PORT: "50052"
+      NODE_TARGET: "storage-node-2:50052"
+    networks: ["project3_net"]
+    depends_on:
+      image-builder:
+        condition: service_completed_successfully
+
+  storage-node-3:
+    image: project3-image:latest
+    container_name: storage-node-3
+    hostname: storage-node-3
+    command: ["python", "-u", "storage/storage_node.py"]
+    environment:
+      GRPC_SERVER_PORT: "50053"
+      NODE_TARGET: "storage-node-3:50053"
+    networks: ["project3_net"]
+    depends_on:
+      image-builder:
+        condition: service_completed_successfully
 
 networks:
   project3_net:
