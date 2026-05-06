@@ -151,8 +151,7 @@ python -m grpc_tools.protoc \
 
 ## Troubleshooting
 
-**`Conflict. The container name "/storage-node-X" is already in use`**
-— a previous run wasn't cleaned up. Run:
+**`Conflict. The container name "/storage-node-X" is already in use`**, a previous run wasn't cleaned up. Run:
 ```bash
 docker compose down --remove-orphans
 ```
