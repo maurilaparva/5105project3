@@ -68,6 +68,11 @@ Throughput:           557.3 ops/sec
 
 ## Replication Strategy
 
+- We chose primary-backup replication with three replicas per item group. We picked primary-backup over quorum for two reasons: simplicity (one replica is the source of truth, no consensus protcol needed) and predictability (writes have a single ordering point so we don't have to reason about concurrent conflicting updates). The tradeoff is that the primary is a single point for write latency, every write incurs at least one extra hop to the primary, and the primary's load doesn't shard.
+- Three replicas means we tolerate up to two storage-node failures while preserving data, and we still have a quorum of two for any future read-quorum extension.
+- A design choice is that the primary is responsible for assigning all identity and ordering. Specifically, the primary generates the UUID for new items, the bid ID for new bids, and the version number on every write. When the service node fans the result out to backups, it sends the complete primary-built object via dedicated ReplicateItem and ReplicateBid RPCs, not the original client request. This was a fix to a bug we were facing: an earlier version called Create on every replica, which caused each replica to generate its own independent UUID, leaving them with permanently inconsistent state. By replicating finalized objects rather than re-executing operations, we guarantee all replicas observe identical state for committed writes.
+- The replication is synchronous-with-timeout: the service node fans out replication calls to all live backups in parallel and waits up to 3 seconds for each. If a backup is slow or dead, replication continues without it. The primary's commit has already succeeded, so the client sees a successful response. The tradeoff is that a backup that's temporarily slow could miss a write; we mitigate this through the heartbeat-based primary election, which ensures we never elect a stale replica as primary unless it was healthy at the moment of failover.
+
 ## Synchronization Approach
 
 ## Failure Handling
