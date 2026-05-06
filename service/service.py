@@ -86,10 +86,10 @@ def heartbeat_loop() -> None:
 
 
 def replicate(method: str, request) -> None:
-    """Fan write out to all backup replicas in parallel threads."""
+    """Fan a replication call out to all backup replicas in parallel."""
     def _send(stub):
         try:
-            getattr(stub, method)(request)
+            getattr(stub, method)(request, timeout=3)
         except grpc.RpcError as e:
             print(f"[service:{NODE_TARGET}] replication error {method}: {e.details()}")
 
@@ -108,13 +108,13 @@ class ServiceNodeService(pb_grpc.ServiceNodeServiceServicer):
     def Heartbeat(self, request: pb.HeartbeatRequest, context: grpc.ServicerContext) -> pb.HeartbeatResponse:
         return pb.HeartbeatResponse(alive=True)
 
-    def HandleCreate(self, request: pb.CreateRequest, context: grpc.ServicerContext) -> pb.CreateResponse:
+    def HandleCreate(self, request, context):
         primary = storage.primary()
         if primary is None:
             context.set_code(grpc.StatusCode.UNAVAILABLE)
             return pb.CreateResponse()
         resp = primary.Create(request)
-        replicate("Create", request)
+        replicate("ReplicateItem", pb.ReplicateItemRequest(item=resp.item))
         print(f"[service:{NODE_TARGET}] HandleCreate id={resp.item.id}")
         return resp
 
@@ -132,23 +132,26 @@ class ServiceNodeService(pb_grpc.ServiceNodeServiceServicer):
             return pb.SearchResponse()
         return primary.Search(request)
 
-    def HandleUpdate(self, request: pb.UpdateRequest, context: grpc.ServicerContext) -> pb.UpdateResponse:
+    def HandleUpdate(self, request, context):
         primary = storage.primary()
         if primary is None:
             context.set_code(grpc.StatusCode.UNAVAILABLE)
             return pb.UpdateResponse()
         resp = primary.Update(request)
-        replicate("Update", request)
+        replicate("ReplicateItem", pb.ReplicateItemRequest(item=resp.item))
         print(f"[service:{NODE_TARGET}] HandleUpdate id={request.item_id}")
         return resp
 
-    def HandleStoreBid(self, request: pb.StoreBidRequest, context: grpc.ServicerContext) -> pb.StoreBidResponse:
+    def HandleStoreBid(self, request, context):
         primary = storage.primary()
         if primary is None:
             context.set_code(grpc.StatusCode.UNAVAILABLE)
             return pb.StoreBidResponse()
         resp = primary.StoreBid(request)
-        replicate("StoreBid", request)
+        replicate("ReplicateBid", pb.ReplicateBidRequest(
+            bid=resp.bid,
+            updated_item=resp.updated_item,
+        ))
         print(f"[service:{NODE_TARGET}] HandleStoreBid item={request.item_id} winning={resp.is_winning_bid}")
         return resp
 

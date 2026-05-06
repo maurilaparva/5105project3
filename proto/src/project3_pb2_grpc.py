@@ -686,6 +686,21 @@ class StorageServiceStub(object):
                 request_serializer=project3__pb2.ChangeAuctionRequest.SerializeToString,
                 response_deserializer=project3__pb2.ChangeAuctionResponse.FromString,
                 _registered_method=True)
+        self.ReplicateItem = channel.unary_unary(
+                '/StorageService/ReplicateItem',
+                request_serializer=project3__pb2.ReplicateItemRequest.SerializeToString,
+                response_deserializer=project3__pb2.ReplicateItemResponse.FromString,
+                _registered_method=True)
+        self.ReplicateBid = channel.unary_unary(
+                '/StorageService/ReplicateBid',
+                request_serializer=project3__pb2.ReplicateBidRequest.SerializeToString,
+                response_deserializer=project3__pb2.ReplicateBidResponse.FromString,
+                _registered_method=True)
+        self.StateTransfer = channel.unary_unary(
+                '/StorageService/StateTransfer',
+                request_serializer=project3__pb2.StateTransferRequest.SerializeToString,
+                response_deserializer=project3__pb2.StateTransferResponse.FromString,
+                _registered_method=True)
 
 
 class StorageServiceServicer(object):
@@ -733,6 +748,24 @@ class StorageServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ReplicateItem(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReplicateBid(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StateTransfer(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_StorageServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -770,6 +803,21 @@ def add_StorageServiceServicer_to_server(servicer, server):
                     servicer.ChangeAuction,
                     request_deserializer=project3__pb2.ChangeAuctionRequest.FromString,
                     response_serializer=project3__pb2.ChangeAuctionResponse.SerializeToString,
+            ),
+            'ReplicateItem': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReplicateItem,
+                    request_deserializer=project3__pb2.ReplicateItemRequest.FromString,
+                    response_serializer=project3__pb2.ReplicateItemResponse.SerializeToString,
+            ),
+            'ReplicateBid': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReplicateBid,
+                    request_deserializer=project3__pb2.ReplicateBidRequest.FromString,
+                    response_serializer=project3__pb2.ReplicateBidResponse.SerializeToString,
+            ),
+            'StateTransfer': grpc.unary_unary_rpc_method_handler(
+                    servicer.StateTransfer,
+                    request_deserializer=project3__pb2.StateTransferRequest.FromString,
+                    response_serializer=project3__pb2.StateTransferResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -961,6 +1009,87 @@ class StorageService(object):
             '/StorageService/ChangeAuction',
             project3__pb2.ChangeAuctionRequest.SerializeToString,
             project3__pb2.ChangeAuctionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReplicateItem(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/StorageService/ReplicateItem',
+            project3__pb2.ReplicateItemRequest.SerializeToString,
+            project3__pb2.ReplicateItemResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReplicateBid(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/StorageService/ReplicateBid',
+            project3__pb2.ReplicateBidRequest.SerializeToString,
+            project3__pb2.ReplicateBidResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StateTransfer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/StorageService/StateTransfer',
+            project3__pb2.StateTransferRequest.SerializeToString,
+            project3__pb2.StateTransferResponse.FromString,
             options,
             channel_credentials,
             insecure,

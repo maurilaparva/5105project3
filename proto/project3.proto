@@ -27,6 +27,9 @@ service StorageService {
   rpc Update(UpdateRequest) returns (UpdateResponse);
   rpc StoreBid(StoreBidRequest) returns (StoreBidResponse);
   rpc ChangeAuction(ChangeAuctionRequest) returns (ChangeAuctionResponse);
+  rpc ReplicateItem(ReplicateItemRequest) returns (ReplicateItemResponse);
+  rpc ReplicateBid(ReplicateBidRequest) returns (ReplicateBidResponse);
+  rpc StateTransfer(StateTransferRequest) returns (StateTransferResponse);
 }
 
 message Item {
@@ -59,7 +62,7 @@ message HeartbeatResponse {
 
 enum ItemStatus {
   ITEM_UNKNOWN = 0;
-  ITEM_AVALIABLE = 1;
+  ITEM_AVAILABLE = 1;
   ITEM_SOLD = 2;
 }
 
@@ -220,4 +223,29 @@ message ChangeAuctionResponse {
     Bid new_bid = 2;
     string status_update = 3;
   }
+}
+
+message ReplicateItemRequest {
+  Item item = 1;
+}
+
+message ReplicateItemResponse {
+  bool ok = 1;
+}
+
+message ReplicateBidRequest {
+  Bid bid = 1;
+  Item updated_item = 2;
+}
+
+message ReplicateBidResponse {
+  bool ok = 1;
+}
+
+message StateTransferRequest {
+}
+
+message StateTransferResponse {
+  repeated Item items = 1;
+  repeated Bid bids = 2;
 }
