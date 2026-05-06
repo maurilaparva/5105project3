@@ -9,10 +9,21 @@ service MarketService {
   rpc JoinAuction(stream AuctionClientMessage) returns (stream AuctionServerMessage);
 }
 
-service ControllerService {
+service ServiceNodeService {
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc HandleCreate(CreateRequest) returns (CreateResponse);
+  rpc HandleGet(GetRequest) returns (GetResponse);
+  rpc HandleSearch(SearchRequest) returns (SearchResponse);
+  rpc HandleUpdate(UpdateRequest) returns (UpdateResponse);
+  rpc HandleStoreBid(StoreBidRequest) returns (StoreBidResponse);
+  rpc HandleAuction(ChangeAuctionRequest) returns (ChangeAuctionResponse);
+}
+
+service StorageService {
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc Create(CreateRequest) returns (CreateResponse);
-  rpc Search(SearchRequest) returns (SearchResponse);
   rpc Get(GetRequest) returns (GetResponse);
+  rpc Search(SearchRequest) returns (SearchResponse);
   rpc Update(UpdateRequest) returns (UpdateResponse);
   rpc StoreBid(StoreBidRequest) returns (StoreBidResponse);
   rpc ChangeAuction(ChangeAuctionRequest) returns (ChangeAuctionResponse);
@@ -39,10 +50,17 @@ message Bid {
   string timestamp = 5;
 }
 
+message HeartbeatRequest {
+}
+
+message HeartbeatResponse {
+  bool alive = 1;
+}
+
 enum ItemStatus {
-  ITEM_UNKNOWN = 1;
-  ITEM_AVALIABLE = 2;
-  ITEM_SOLD = 3;
+  ITEM_UNKNOWN = 0;
+  ITEM_AVALIABLE = 1;
+  ITEM_SOLD = 2;
 }
 
 message AuctionDetails {
@@ -163,21 +181,6 @@ message GetRequest {
 
 message GetResponse {
   Item item = 1;
-}
-
-message SearchRequest {
-  string     keyword    = 1;
-  string     category   = 2;
-  ItemStatus status     = 3;
-  string     seller_id  = 4;
-  int32      page_size  = 5;
-  string     page_token = 6;
-}
-
-message SearchResponse {
-  repeated Item items           = 1;
-  string        next_page_token = 2;
-  int32         total_count     = 3;
 }
 
 message UpdateRequest {
