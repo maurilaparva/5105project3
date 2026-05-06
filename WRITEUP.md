@@ -46,3 +46,8 @@ update         319     200     14.77     14.25     21.80     29.66
 Total successful ops: 11174
 Throughput:           557.3 ops/sec
 ======================================================================
+
+# Autoscaling fired and worked end-to-end
+
+[autoscale] scaling up → service-node-3 on port 50062
+[autoscale] scaling down → stopping service-node-3

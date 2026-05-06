@@ -1,317 +1,289 @@
-from concurrent import futures
-import threading
-import time
-import os
+# CSCI 5105 — Project #3
+## Fault-Tolerant, Replicated Marketplace with Autoscaling
 
-import docker
-import grpc
-import project3_pb2 as pb
-import project3_pb2_grpc as pb_grpc
+A distributed backend for a simplified online marketplace, built with
+Python, gRPC, and Docker. Implements primary-backup replication across
+three storage replicas, heartbeat-based failure detection, primary
+failover, and demand-based autoscaling of the service tier.
 
-CONTROLLER_PORT    = os.environ.get("CONTROLLER_PORT", "50050")
-SCALE_UP_THRESHOLD = int(os.environ.get("SCALE_UP_THRESHOLD", "10"))   # requests in flight
-SCALE_DOWN_THRESHOLD = int(os.environ.get("SCALE_DOWN_THRESHOLD", "2"))
-HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "5"))
-COOLDOWN_SECONDS   = int(os.environ.get("COOLDOWN_SECONDS", "30"))
-NETWORK_NAME       = os.environ.get("NETWORK_NAME", "project3_net")
-IMAGE_NAME         = os.environ.get("IMAGE_NAME", "project3-image:latest")
+---
 
-SERVICE_NODES_INITIAL = [
-    "service-node-1:50060",
-    "service-node-2:50061",
-]
+## Architecture at a glance
 
+```
+                     ┌──────────────┐
+       Clients ─────▶│  Controller  │  (routes requests, autoscales,
+                     │  :50050      │   monitors service nodes)
+                     └──────┬───────┘
+                            │
+              ┌─────────────┴─────────────┐
+              ▼                           ▼
+      ┌──────────────┐            ┌──────────────┐
+      │ service-node │   ...      │ service-node │  (1..N, autoscaled)
+      │      :50060  │            │      :5006X  │
+      └──────┬───────┘            └──────┬───────┘
+             │                           │
+             └───────────┬───────────────┘
+                         ▼
+              ┌──────────────────────┐
+              │  storage replicas    │
+              │  primary + 2 backups │  (heartbeated, failover-able)
+              │  :50051 / 52 / 53    │
+              └──────────────────────┘
+```
 
-class ServiceNodeRegistry:
-    """
-    Thread-safe registry of live service nodes.
-    Supports round-robin dispatch, heartbeat-based failure detection,
-    and dynamic registration of new nodes spun up via Docker.
-    """
+- **Controller** (`controller/controller.py`): single entry point, tracks
+  service-node health, makes scaling decisions.
+- **Service nodes** (`service/service.py`): stateless request handlers.
+  Each holds its own view of the storage primary; coordinates writes
+  with primary + replicates to backups.
+- **Storage nodes** (`storage/storage_node.py`): hold replicated state.
+  One is elected primary; others are backups.
 
-    def __init__(self, targets: list[str]) -> None:
-        self._lock     = threading.Lock()
-        self._nodes    = {}
-        self._targets  = []
-        self._rr_idx   = 0
+---
 
-        for target in targets:
-            self._register(target)
+## Prerequisites
 
-    def _register(self, target: str) -> None:
-        """Add a node entry (must hold lock or call from __init__)."""
-        channel = grpc.insecure_channel(target)
-        stub    = pb_grpc.ServiceNodeServiceStub(channel)
-        self._nodes[target]  = {"healthy": False, "stub": stub}
-        self._targets.append(target)
-        print(f"[registry] registered {target}")
+- **Docker Desktop** (with WSL2 integration enabled if on Windows)
+- **VS Code** with the *Dev Containers* extension (recommended for development)
+- Linux, macOS, or Windows + WSL2
 
-    def register(self, target: str) -> None:
-        with self._lock:
-            if target not in self._nodes:
-                self._register(target)
+No need to install Python, gRPC, or any other dependencies on the host
+machine — everything runs inside containers.
 
-    def mark_healthy(self, target: str) -> None:
-        with self._lock:
-            if target in self._nodes:
-                self._nodes[target]["healthy"] = True
+---
 
-    def mark_dead(self, target: str) -> None:
-        with self._lock:
-            if target in self._nodes and self._nodes[target]["healthy"]:
-                print(f"[registry] {target} marked dead")
-                self._nodes[target]["healthy"] = False
+## File layout
 
-    def pick(self) -> pb_grpc.ServiceNodeServiceStub | None:
-        """Round-robin over healthy nodes."""
-        with self._lock:
-            healthy = [t for t in self._targets if self._nodes[t]["healthy"]]
-            if not healthy:
-                return None
-            target = healthy[self._rr_idx % len(healthy)]
-            self._rr_idx += 1
-            return self._nodes[target]["stub"]
+```
+5105project3/
+├── client/
+│   ├── client.py          # smoke-test client
+│   └── load_test.py       # load generator for evaluation
+├── controller/
+│   └── controller.py      # central controller
+├── service/
+│   └── service.py         # service-node implementation
+├── storage/
+│   └── storage_node.py    # storage-replica implementation
+├── proto/
+│   ├── project3.proto     # gRPC schema
+│   └── src/               # generated _pb2 files (regenerated on build)
+├── docker/
+│   ├── Dockerfile
+│   └── docker-compose.yml
+├── .devcontainer/
+│   └── devcontainer.json
+├── requirements.txt
+└── README.md
+```
 
-    def healthy_count(self) -> int:
-        with self._lock:
-            return sum(1 for info in self._nodes.values() if info["healthy"])
+---
 
-    def all_targets(self) -> list[str]:
-        with self._lock:
-            return list(self._targets)
+## Quick start
 
+The system runs as a docker-compose stack. Bring it up from the
+project's `docker/` directory.
 
-# ── Globals ────────────────────────────────────────────────────────────────────
+### 1. Start the system
 
-registry: ServiceNodeRegistry = None
-docker_client: docker.DockerClient = None
-_inflight      = 0
-_inflight_lock = threading.Lock()
-_last_scale    = 0.0
+```bash
+cd docker
+docker compose up --build
+```
 
+This builds a single image (`project3-image:latest`) and starts:
+- 1 controller (port `50050`, exposed to host)
+- 2 service nodes (`service-node-1`, `service-node-2`)
+- 3 storage replicas (`storage-node-1/2/3`)
 
-# ── Autoscaling ────────────────────────────────────────────────────────────────
+Wait until you see lines like:
 
-def scale_up() -> None:
-    global _last_scale
-    now = time.time()
-    if now - _last_scale < COOLDOWN_SECONDS:
-        return
-    _last_scale = now
+```
+controller       | [controller] listening on port 50050
+service-node-1   | [service:service-node-1:50060] primary storage = storage-node-1:50051
+service-node-2   | [service:service-node-2:50061] primary storage = storage-node-1:50051
+```
 
-    existing = docker_client.containers.list(filters={"name": "service-node-"})
-    node_num  = len(existing) + 1
-    new_port  = 50060 + node_num - 1
-    new_name  = f"service-node-{node_num}"
-    new_target = f"{new_name}:{new_port}"
+at which point the system is ready for clients.
 
-    print(f"[autoscale] scaling up → {new_name} on port {new_port}")
-    docker_client.containers.run(
-        image=IMAGE_NAME,
-        name=new_name,
-        hostname=new_name,
-        command=["python", "-u", "service/service.py"],
-        environment={
-            "PYTHONPATH": "/app:/app/proto/src",
-            "GRPC_SERVER_PORT": str(new_port),
-            "NODE_TARGET": new_target,
-        },
-        network=NETWORK_NAME,
-        working_dir="/app",
-        detach=True,
-    )
+### 2. Run the smoke-test client
 
-    registry.register(new_target)
+The client exercises every required RPC: `CreateItem`, `GetItem`,
+`SearchItems`, `UpdateItem`, `PlaceBid`, and the streaming
+`JoinAuction`.
 
+In a **separate terminal**, from inside the devcontainer:
 
-def scale_down() -> None:
-    global _last_scale
-    now = time.time()
-    if now - _last_scale < COOLDOWN_SECONDS:
-        return
-    if registry.healthy_count() <= 1:
-        return   # always keep at least one node
-    _last_scale = now
+```bash
+python client/client.py
+```
 
-    # Remove the highest-numbered service node
-    running = sorted(
-        docker_client.containers.list(filters={"name": "service-node-"}),
-        key=lambda c: c.name,
-        reverse=True,
-    )
-    if not running:
-        return
+Or, equivalently, from the host using a one-shot Docker container that
+joins the system's network:
 
-    target_container = running[0]
-    print(f"[autoscale] scaling down → stopping {target_container.name}")
-    target_container.stop(timeout=5)
+```bash
+docker run --rm \
+  --network project3_net \
+  -e CONTROLLER_HOST=controller \
+  -e CONTROLLER_PORT=50050 \
+  -v "$(pwd):/app" -w /app \
+  -e PYTHONPATH=/app:/app/proto/src \
+  project3-image:latest \
+  python -u client/client.py
+```
 
+You should see output like:
 
-def autoscale_loop() -> None:
-    while True:
-        time.sleep(HEARTBEAT_INTERVAL)
-        with _inflight_lock:
-            current = _inflight
+```
+create: id=... title=Vintage Camera price=5000 version=1
+get:    id=... title=Vintage Camera price=5000 version=1
+search: keyword='' total=1
+update: id=... version=2
+bid:    bid_id=... amount=5500 is_winning=True
+...
+auction 1: status=joined
+auction 2: status=bid_received
+```
 
-        if current >= SCALE_UP_THRESHOLD:
-            scale_up()
-        elif current <= SCALE_DOWN_THRESHOLD and registry.healthy_count() > 2:
-            scale_down()
+### 3. Run the load generator (used for evaluation)
 
+```bash
+# Baseline: modest load
+python client/load_test.py --clients 10 --duration 15
 
-# ── Heartbeat ──────────────────────────────────────────────────────────────────
+# Heavy load: triggers autoscaling
+python client/load_test.py --clients 20 --duration 30
+```
 
-def heartbeat_loop() -> None:
-    while True:
-        for target in registry.all_targets():
-            try:
-                stub = pb_grpc.ServiceNodeServiceStub(grpc.insecure_channel(target))
-                stub.Heartbeat(pb.HeartbeatRequest(), timeout=2)
-                registry.mark_healthy(target)
-            except grpc.RpcError:
-                registry.mark_dead(target)
-        time.sleep(HEARTBEAT_INTERVAL)
+Output reports per-operation count, errors, and average / p50 / p95 /
+p99 latencies, plus overall throughput.
 
+### 4. Stop the system
 
-# ── Request tracking helpers ───────────────────────────────────────────────────
+```bash
+docker compose down
+```
 
-class _track:
-    """Context manager to count in-flight requests."""
-    def __enter__(self):
-        global _inflight
-        with _inflight_lock:
-            _inflight += 1
+---
 
-    def __exit__(self, *_):
-        global _inflight
-        with _inflight_lock:
-            _inflight -= 1
+## Demonstrating fault tolerance
 
+With the system running and idle (or under load), in another terminal:
 
-# ── MarketService ──────────────────────────────────────────────────────────────
+```bash
+# Find the current primary in the logs:
+docker compose -f docker/docker-compose.yml logs service-node-1 | grep "primary"
 
-class MarketService(pb_grpc.MarketServiceServicer):
+# Kill it (assume storage-node-1 is the primary):
+docker kill storage-node-1
+```
 
-    def _stub(self, context: grpc.ServicerContext):
-        stub = registry.pick()
-        if stub is None:
-            context.set_code(grpc.StatusCode.UNAVAILABLE)
-            context.set_details("No healthy service nodes available")
-        return stub
+Within ~5 seconds you should see in the compose logs:
 
-    def CreateItem(self, request: pb.CreateItemRequest, context: grpc.ServicerContext) -> pb.CreateItemResponse:
-        with _track():
-            stub = self._stub(context)
-            if stub is None:
-                return pb.CreateItemResponse()
-            print(f"[controller] CreateItem title={request.title}")
-            resp = stub.HandleCreate(pb.CreateRequest(
-                seller_id=request.seller_id,
-                title=request.title,
-                description=request.description,
-                category=request.category,
-                quantity=request.quantity,
-                starting_price=request.starting_price,
-            ))
-            return pb.CreateItemResponse(item=resp.item)
+```
+service-node-1 | [service:...] storage storage-node-1:50051 marked dead
+service-node-1 | [service:...] primary failed over to storage-node-2:50052
+service-node-2 | [service:...] storage storage-node-1:50051 marked dead
+service-node-2 | [service:...] primary failed over to storage-node-2:50052
+```
 
-    def GetItem(self, request: pb.GetItemRequest, context: grpc.ServicerContext) -> pb.GetItemResponse:
-        with _track():
-            stub = self._stub(context)
-            if stub is None:
-                return pb.GetItemResponse()
-            print(f"[controller] GetItem item_id={request.item_id}")
-            resp = stub.HandleGet(pb.GetRequest(item_id=request.item_id))
-            return pb.GetItemResponse(item=resp.item)
+Re-run the smoke-test client to confirm the system still serves requests
+correctly with only two storage replicas surviving.
 
-    def SearchItems(self, request: pb.SearchItemsRequest, context: grpc.ServicerContext) -> pb.SearchItemsResponse:
-        with _track():
-            stub = self._stub(context)
-            if stub is None:
-                return pb.SearchItemsResponse()
-            print(f"[controller] SearchItems keyword={request.keyword!r}")
-            resp = stub.HandleSearch(pb.SearchRequest(
-                keyword=request.keyword,
-                category=request.category,
-                status=request.status,
-                seller_id=request.seller_id,
-                page_size=request.page_size,
-                page_token=request.page_token,
-            ))
-            return pb.SearchItemsResponse(
-                items=resp.items,
-                next_page_token=resp.next_page_token,
-                total_count=resp.total_count,
-            )
+---
 
-    def UpdateItem(self, request: pb.UpdateItemRequest, context: grpc.ServicerContext) -> pb.UpdateItemResponse:
-        with _track():
-            stub = self._stub(context)
-            if stub is None:
-                return pb.UpdateItemResponse()
-            print(f"[controller] UpdateItem item_id={request.item_id}")
-            resp = stub.HandleUpdate(pb.UpdateRequest(
-                item_id=request.item_id,
-                item=request.item,
-            ))
-            return pb.UpdateItemResponse(item=resp.item)
+## Demonstrating autoscaling
 
-    def PlaceBid(self, request: pb.PlaceBidRequest, context: grpc.ServicerContext) -> pb.PlaceBidResponse:
-        with _track():
-            stub = self._stub(context)
-            if stub is None:
-                return pb.PlaceBidResponse()
-            print(f"[controller] PlaceBid item_id={request.item_id} bidder={request.bidder_id}")
-            resp = stub.HandleStoreBid(pb.StoreBidRequest(
-                item_id=request.item_id,
-                bidder_id=request.bidder_id,
-                amount=request.amount,
-            ))
-            return pb.PlaceBidResponse(
-                bid=resp.bid,
-                updated_item=resp.updated_item,
-                is_winning_bid=resp.is_winning_bid,
-            )
+The controller monitors *in-flight requests* against the service tier.
+When the count exceeds `SCALE_UP_THRESHOLD`, it spawns an additional
+service-node container; when it drops below `SCALE_DOWN_THRESHOLD`, it
+stops one (subject to a cooldown).
 
-    def JoinAuction(self, request_iterator, context: grpc.ServicerContext):
-        with _track():
-            stub = self._stub(context)
-            if stub is None:
-                return
-            for client_msg in request_iterator:
-                req = pb.ChangeAuctionRequest(item_id=client_msg.item_id)
-                if client_msg.HasField("join"):
-                    req.join = client_msg.join
-                elif client_msg.HasField("bid_amount"):
-                    req.bid_amount.CopyFrom(client_msg.bid_amount)
-                resp = stub.HandleAuction(req)
-                server_msg = pb.AuctionServerMessage(item_id=resp.item_id)
-                if resp.HasField("new_bid"):
-                    server_msg.new_bid.CopyFrom(resp.new_bid)
-                elif resp.HasField("status_update"):
-                    server_msg.status_update = resp.status_update
-                yield server_msg
+Defaults are conservative for normal use. To make autoscaling visible
+under our load test, lower the threshold in `docker/docker-compose.yml`:
 
+```yaml
+controller:
+  environment:
+    SCALE_UP_THRESHOLD: "3"
+    SCALE_DOWN_THRESHOLD: "1"
+```
 
-# ── Serve ──────────────────────────────────────────────────────────────────────
+Restart the stack and run the load generator with at least 20 clients.
+You should see lines like the following in the controller log:
 
-def serve() -> None:
-    global registry, docker_client
+```
+[autoscale] scaling up   → service-node-3 on port 50062
+[autoscale] scaling down → stopping service-node-3
+```
 
-    docker_client = docker.from_env()
-    registry      = ServiceNodeRegistry(SERVICE_NODES_INITIAL)
+Verify the new container existed (or still exists) with:
 
-    threading.Thread(target=heartbeat_loop, daemon=True).start()
-    threading.Thread(target=autoscale_loop, daemon=True).start()
-    print("[controller] heartbeat and autoscale threads started")
+```bash
+docker ps -a --filter "name=service-node"
+```
 
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=16))
-    pb_grpc.add_MarketServiceServicer_to_server(MarketService(), server)
-    server.add_insecure_port(f"[::]:{CONTROLLER_PORT}")
-    server.start()
-    print(f"[controller] listening on port {CONTROLLER_PORT}")
-    server.wait_for_termination()
+---
 
+## Configuration
 
-if __name__ == "__main__":
-    serve()
+All configuration is via environment variables defined in
+`docker-compose.yml`.
+
+| Variable               | Default | Component           | Meaning |
+|------------------------|---------|---------------------|---------|
+| `CONTROLLER_PORT`      | 50050   | controller          | gRPC listen port |
+| `SCALE_UP_THRESHOLD`   | 10      | controller          | in-flight requests above this triggers scale-up |
+| `SCALE_DOWN_THRESHOLD` | 2       | controller          | in-flight requests below this triggers scale-down |
+| `HEARTBEAT_INTERVAL`   | 5       | controller, service | seconds between heartbeats |
+| `COOLDOWN_SECONDS`     | 30      | controller          | minimum seconds between scale events |
+| `IMAGE_NAME`           | project3-image:latest | controller | image used for autoscaled containers |
+| `NETWORK_NAME`         | project3_net | controller     | docker network for autoscaled containers |
+| `GRPC_SERVER_PORT`     | varies  | service, storage    | gRPC listen port |
+
+---
+
+## Re-generating the proto files
+
+The generated `_pb2.py` and `_pb2_grpc.py` files are produced inside the
+docker build, so a normal `docker compose up --build` regenerates them
+automatically.
+
+If you need to regenerate them manually inside the devcontainer (e.g.
+after editing `proto/project3.proto`):
+
+```bash
+python -m grpc_tools.protoc \
+  -I proto \
+  --python_out=proto/src \
+  --grpc_python_out=proto/src \
+  proto/project3.proto
+```
+
+---
+
+## Troubleshooting
+
+**`docker: command not found`** — you're inside the devcontainer.
+Docker commands run on the WSL/Linux/macOS host, not inside the
+devcontainer. Open a separate host terminal.
+
+**`Conflict. The container name "/storage-node-X" is already in use`**
+— a previous run wasn't cleaned up. Run:
+```bash
+docker compose down --remove-orphans
+```
+
+**Client can't connect / `host.docker.internal` not resolved** — the
+client tries to reach the controller via `host.docker.internal:50050`
+by default. Override with environment variables:
+```bash
+CONTROLLER_HOST=localhost CONTROLLER_PORT=50050 python client/client.py
+```
+or run the client inside the docker network as shown in section 2.
+
+**Autoscaling never fires** — under low latency the in-flight count
+rarely climbs above the default threshold of 10. Lower
+`SCALE_UP_THRESHOLD` to 3 (see autoscaling section above) and rerun
+under load.
