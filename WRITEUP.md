@@ -51,3 +51,29 @@ Throughput:           557.3 ops/sec
 
 [autoscale] scaling up → service-node-3 on port 50062
 [autoscale] scaling down → stopping service-node-3
+
+# Write-Up
+
+## System Architecture
+
+- The system is a Docker-only deployment (no Kubernetes) consisting of three tiers connected by gRPC.
+- A centralized controller (port 50050) is the single entry point for clients. It exposes the MarketService gRPC interface, the client-facing API, and forwards requests to the service tier. The controller also runs 2 background threads: a heartbeat loop that periodically pings every service node, and an autoscale loop that spawns or kills service-node containers based on observed load. All shared metadata (the registry of service nodes and their health status) is protected by a threading lock because the gRPC server itself uses a thread pool of 16 workers.
+- A service tier (initially 2 nodes, scalable up to N) handles request processing. Each service node exposes the ServiceNodeService gRPC interface and is essentially stateless, holding no marketplace data. Its job is to coordinate writes with the storage tier: send the request to the primary storage replica, then fan out the resulting state to the backups. Service nodes also independently maintain their own view of which storage replica is the primary by running their own heartbeat loop against the storage tier. We chose to scale the service tier (not the storage tier) because replicas hold persistent state and have stable identities, while service nodes are interchangeable workers.
+- A storage tier of three replicas holds the actual marketplace state. Each replica exposes the StorageService gRPC interface and stores items and binds in an in-memory dictionary protected by a threading lock. One replica is the primary and accepts writes (Create, Update, StoreBid); the other two are backups that accept replication calls (ReplicateItem, ReplicateBid). All three serve reads (Get, Search).
+- Request flow for write: Client → Controller → ServiceNode → Primary Storage (commit)
+ ServiceNode -> Backup 1 -> Backup 2 (replicate in parallel)
+- Request flow for a read: Client → Controller → ServiceNode → Primary
+- Communication is via gRPC unary RPCs except for JoinAuction which is a bidirectional streaming RPC supporting persistent auction participation as required.
+                              
+
+## Replication Strategy
+
+## Synchronization Approach
+
+## Failure Handling
+
+## Autoscaling Policy
+
+## Workload and Evaluation Results
+
+## Major Tradeoffs and Lessons Learned
