@@ -80,6 +80,7 @@ message CreateItemRequest {
   string description = 3;
   string category = 4;
   int32 quantity = 5;
+  Money starting_price = 6;
 }
 
 message CreateItemResponse {
