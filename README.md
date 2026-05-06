@@ -1,5 +1,7 @@
 ## Project 3 Start-Up Instructions
 
+*Make sure Docker Desktop is running*
+
 ### 1. Start the system
 
 ```bash
